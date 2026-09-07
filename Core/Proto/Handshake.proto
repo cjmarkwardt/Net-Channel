@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package netchannel.wire;
+
+option csharp_namespace = "Markwardt.NetChannel.Wire";
+
+// Step 1, client to server: proposes a protocol version and an ephemeral key, and starts a new handshake attempt.
+// The server allocates no state in response to this message; see Docs/Wire.md.
+message HandshakeInit {
+  // The single protocol version the client is running, e.g. "1.2.0".
+  string protocol_version = 1;
+
+  // The client's ephemeral X25519 public key. Bound into the server's cookie, and combined with
+  // `HandshakeChallenge.server_public_key` to derive the connection's session key.
+  bytes client_public_key = 2;
+}
+
+// Step 2, server to client: a stateless, self-verifying challenge the client must echo back to prove it owns its claimed source address.
+message HandshakeChallenge {
+  // Echoed back unchanged from the `HandshakeInit` that prompted this challenge.
+  bytes client_public_key = 1;
+
+  // The server's ephemeral X25519 public key, combined with `client_public_key` to derive the connection's session key.
+  bytes server_public_key = 2;
+
+  // An opaque, server-signed cookie the client must echo back unmodified in its `HandshakeResponse`.
+  bytes cookie = 3;
+
+  // An Ed25519 signature over `server_public_key`, made with the server's long-term identity private key.
+  // A client that already has the matching identity public key pinned can verify this without the server
+  // needing to send that key back. Empty for a server with no long-term identity key configured, in which
+  // case only unauthenticated clients can proceed.
+  bytes server_signature = 4;
+}
+
+// Step 3, client to server: repeats the handshake with the server's cookie attached, proving return routability.
+message HandshakeResponse {
+  // Echoed back unchanged from the `HandshakeChallenge`.
+  bytes client_public_key = 1;
+
+  // Echoed back unchanged from the `HandshakeChallenge`.
+  bytes server_public_key = 2;
+
+  // Echoed back unchanged from the `HandshakeChallenge`.
+  bytes cookie = 3;
+}
+
+// Step 4, server to client: the handshake is complete and a connection now exists.
+message HandshakeAccept {
+  // The id newly assigned to the connection, used as `Packet.connection_id` for all further packets.
+  uint64 connection_id = 1;
+}
+
+// Sent by the server in place of a `HandshakeChallenge` or `HandshakeAccept` when a handshake attempt cannot proceed.
+message HandshakeReject {
+  // A human-readable message explaining why the handshake attempt was rejected (e.g. an unsupported
+  // protocol version, or an invalid or expired cookie). Free-form text for logging/diagnostics, not a fixed
+  // or enumerated set of values.
+  string reason = 1;
+}

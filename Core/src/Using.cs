@@ -1,0 +1,11 @@
+global using System.Buffers;
+global using System.Buffers.Binary;
+global using System.Collections.Concurrent;
+global using System.Linq.Expressions;
+global using System.Net;
+global using System.Net.Sockets;
+global using System.Numerics;
+global using System.Reactive.Subjects;
+global using System.Runtime.CompilerServices;
+global using Microsoft.Extensions.DependencyInjection;
+global using Microsoft.Extensions.DependencyInjection.Extensions;

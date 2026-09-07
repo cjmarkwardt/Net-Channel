@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package netchannel.wire;
+
+option csharp_namespace = "Markwardt.NetChannel.Wire";
+
+import "Entity.proto";
+import "Handshake.proto";
+
+// Sent by either side to close a previously accepted connection.
+message Disconnect {
+}
+
+// Sent to prove this side of a connection is still alive, and to measure round-trip latency. See Docs/Wire.md.
+message Ping {
+}
+
+// Sent in reply to a Ping, EntityCreate, EntityDestroy, EntitySet, or EntityCall — every packet on the
+// connection that gets exactly one specific answer back. See Docs/Wire.md#responses.
+message Reply {
+  // The `Packet.sequence` of the packet this responds to, correlating it back to whichever pending wait it
+  // satisfies.
+  uint64 in_response_to = 1;
+
+  // Absent from both fields below: a plain acknowledgment (a Ping's reply, or an EntityCreate/EntityDestroy/
+  // EntitySet/void EntityCall accepted with nothing further to report).
+  oneof outcome {
+    // A Task/Task<T>-returning EntityCall's return value, encoded the same way as an EntityCall argument,
+    // including encryption for a NetSecureAttribute method. Empty for a method returning a bare Task.
+    bytes result = 2;
+
+    // Why an EntitySet or EntityCall was not honored — either an owner's decline (e.g. a member with no
+    // NetAccessAttribute access, a NetRoleAttribute the sender's connection lacks, or an unrecognized
+    // property/method) or a generic message standing in for a controller method's own thrown exception,
+    // never the exception's real message. Free-form text otherwise, not a fixed or enumerated set of values,
+    // the same as HandshakeReject.reason. See Docs/Wire.md.
+    string failure = 3;
+  }
+}
+
+// The full contents of a UDP datagram, excluding the leading has_checksum flag byte and the checksum itself,
+// when present. See Docs/Wire.md#datagram-layout.
+message Packet {
+  // The connection this packet belongs to, assigned sequentially by the server. Zero for handshake packets
+  // exchanged before a connection id has been assigned. `varint`-encoded since it stays small for a given
+  // connection's lifetime, unlike a random id.
+  uint64 connection_id = 1;
+
+  // The sender's per-connection, per-direction monotonic counter, covered by `tag` and used for replay
+  // rejection. Zero for the handshake packets exchanged before a connection id has been assigned.
+  // `varint`-encoded for the same reason as `connection_id`.
+  uint64 sequence = 2;
+
+  // A keyed MAC proving the sender holds the connection's session key, and that the packet was not altered
+  // in transit. Empty for the handshake packets exchanged before a connection id has been assigned. See
+  // Docs/Wire.md for how it is computed and verified.
+  bytes tag = 3;
+
+  // The type-specific message carried by this packet. Which field is set determines how it is handled.
+  oneof payload {
+    HandshakeInit handshake_init = 4;
+    HandshakeChallenge handshake_challenge = 5;
+    HandshakeResponse handshake_response = 6;
+    HandshakeAccept handshake_accept = 7;
+    HandshakeReject handshake_reject = 8;
+    Disconnect disconnect = 9;
+    Ping ping = 10;
+    EntityCreate entity_create = 11;
+    EntityDestroy entity_destroy = 12;
+    EntitySet entity_set = 13;
+    EntityCall entity_call = 14;
+    Reply reply = 15;
+  }
+}

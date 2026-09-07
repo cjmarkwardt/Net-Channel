@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package netchannel.wire;
+
+option csharp_namespace = "Markwardt.NetChannel.Wire";
+
+// A single model property and its encoded value, as carried by EntityCreate.properties. EntitySet, which only
+// ever carries one property, declares the same three fields directly instead of nesting this message.
+message EntityProperty {
+  // The id this connection uses to refer to the property from now on, scoped to the model_id of the entity
+  // this is sent for (see Docs/Wire.md) — not shared across different model interfaces.
+  uint32 property_id = 1;
+
+  // The property's name, as declared on the entity's model interface. Set only the first time `property_id`
+  // is used, for this entity's model_id, on this connection; empty on every later `EntityProperty` that
+  // reuses it, since the connection has already learned the mapping.
+  string new_property = 2;
+
+  // The property's encoded value. Its encoding, based on the property's declared type, is out of scope for
+  // this schema.
+  bytes value = 3;
+}
+
+// Sent when a local entity becomes visible to a connection for the first time.
+message EntityCreate {
+  // The id this connection uses to refer to the entity from now on, assigned sequentially and never reused
+  // for a different entity for the life of the connection (see Docs/Wire.md).
+  uint64 entity_id = 1;
+
+  // The id this connection uses to refer to the entity's model interface type from now on.
+  uint32 model_id = 2;
+
+  // The model interface's full type name, including namespace. Set only the first time `model_id` is used
+  // on this connection; empty on every later `EntityCreate` that reuses it, since the connection has already
+  // learned the mapping.
+  string new_model = 3;
+
+  // The id this connection uses to refer to the entity's controller interface type from now on.
+  uint32 controller_id = 4;
+
+  // The controller interface's full type name, including namespace. Set only the first time `controller_id`
+  // is used on this connection; empty on every later `EntityCreate` that reuses it, since the connection has
+  // already learned the mapping.
+  string new_controller = 5;
+
+  // The entity's model property values that differ from their declared type's default, as of whenever this
+  // particular packet was sent. Properties not listed here start at their default value on the receiving
+  // side. A retransmission (Docs/Wire.md#method-delivery) reflects whatever the entity's values are at the
+  // time of that retry, not the values from the first attempt, so a slow-to-acknowledge create doesn't leave
+  // the connection with a stale snapshot.
+  repeated EntityProperty properties = 6;
+}
+
+// Sent when an entity is no longer visible to a connection (e.g. removed from a group, or the connection
+// removed as a viewer). `entity_id` is never reused for a different entity afterward.
+message EntityDestroy {
+  // The entity no longer visible, per `EntityCreate.entity_id`.
+  uint64 entity_id = 1;
+}
+
+// Sent to change a single model property value: by an entity's owner, to broadcast a local change to every
+// connection the entity is visible to; or by a viewer, to request that the owner apply a change to a
+// property whose setter has `NetAccessAttribute` access, which the owner then re-broadcasts to every other
+// viewer in turn.
+message EntitySet {
+  // The entity whose property is changing, per `EntityCreate.entity_id`.
+  uint64 entity_id = 1;
+
+  // The id this connection uses to refer to the property from now on, scoped to the model_id of the entity
+  // this is sent for (see Docs/Wire.md) — not shared across different model interfaces.
+  uint32 property_id = 2;
+
+  // The property's name, as declared on the entity's model interface. Set only the first time `property_id`
+  // is used, for this entity's model_id, on this connection; empty on every later `EntitySet` that reuses it,
+  // since the connection has already learned the mapping.
+  string new_property = 3;
+
+  // The property's new encoded value. Its encoding, based on the property's declared type, is out of scope
+  // for this schema.
+  bytes value = 4;
+}
+
+// Sent to invoke a method on an entity's controller. Arguments are positional, matching the order declared
+// on the controller interface; each argument's own encoding is out of scope for this schema, the same as
+// `EntityProperty.value`.
+message EntityCall {
+  // The entity to call, per `EntityCreate.entity_id`.
+  uint64 entity_id = 1;
+
+  // The id this connection uses to refer to the controller interface method to invoke, from now on, scoped
+  // to the controller_id of the entity being called (see Docs/Wire.md) — not shared across different
+  // controller interfaces.
+  uint32 method_id = 2;
+
+  // The method's name, as declared on the entity's controller interface. Set only the first time
+  // `method_id` is used, for this entity's controller_id, on this connection; empty on every later
+  // `EntityCall` that reuses it, since the connection has already learned the mapping.
+  string new_method = 3;
+
+  // The call's arguments, in declaration order. Encrypted, in place of plaintext, for a NetSecureAttribute
+  // method — see Docs/Wire.md.
+  repeated bytes arguments = 4;
+
+  // A counter scoped to (entity_id, method_id, direction), incremented once per distinct call sent and left
+  // unchanged across retransmissions of that same call, so a receiver can tell a retry apart from a
+  // genuinely new call — needed even for a void method, to avoid invoking it twice for one logical call. Also
+  // used, for a NetSecureAttribute method, to derive a payload-encryption key that stays the same across
+  // retransmissions. See Docs/Wire.md#method-delivery and Docs/Wire.md#payload-encryption.
+  uint64 operation = 5;
+}
