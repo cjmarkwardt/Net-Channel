@@ -16,6 +16,7 @@ public interface INetState
     /// </summary>
     /// <param name="property">The property's name, as it appears in <see cref="Properties"/>.</param>
     /// <returns>The property's current value.</returns>
+    /// <exception cref="ArgumentException"><paramref name="property"/> is not a property of the model interface this state backs.</exception>
     object? Get(string property);
 
     /// <summary>
@@ -23,6 +24,7 @@ public interface INetState
     /// </summary>
     /// <param name="property">The property's name, as it appears in <see cref="Properties"/>.</param>
     /// <param name="value">The value to store.</param>
+    /// <exception cref="ArgumentException"><paramref name="property"/> is not a property of the model interface this state backs.</exception>
     void Set(string property, object? value);
 
     /// <summary>
@@ -30,6 +32,7 @@ public interface INetState
     /// </summary>
     /// <param name="property">The property's name, as it appears in <see cref="Properties"/>.</param>
     /// <returns>An observable that pushes the property's new value, untyped, whenever it changes.</returns>
+    /// <exception cref="ArgumentException"><paramref name="property"/> is not a property of the model interface this state backs.</exception>
     IObservable<object?> Observe(string property);
 }
 

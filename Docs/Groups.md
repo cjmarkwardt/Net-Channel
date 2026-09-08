@@ -51,7 +51,10 @@ The first time a specific entity becomes visible to a specific connection in the
 
 `Remove(entities)` takes entities back out of the group, which removes their visibility from every
 connection in the audience (an entity destruction message per connection, per [Wire.md](Wire.md#entities)).
-A connection's entity id is never reused for a different entity afterward.
+A connection's entity id is never reused for a different entity afterward; an entity that becomes visible to
+that connection again later is created under a new id, as a fresh entity from the connection's point of view. Calling `INetEntity.Destroy()`
+does the same thing across every group at once, so a destroyed entity never stays exposed anywhere — see
+[Entities.md](Entities.md#inetentity-and-inetentitytmodel-tcontroller).
 
 Because visibility is audience-driven, an entity's visibility can also change purely from the audience side —
 adding a viewer to a view exposes every entity already in that view to the new viewer, and removing one
@@ -73,6 +76,10 @@ Beyond the shared `INetGroup` surface, `INetView` adds the pieces needed to mana
   connection's global position, scoped to just this view. Like the global position it overrides, this is
   purely local to this manager and never transmitted to the connection's remote peer.
 - `Destroy` — destroys the view entirely, retracting every entity in it from every viewer.
+
+A connection is not one-directional: both peers can own entities and expose them over the same connection, in
+which case each also views the other's. Each side numbers the entities it owns independently, so the same
+entity id means a different entity depending on which side sent it — see [Wire.md](Wire.md#entities).
 
 `All` has none of these, since it has no audience to manage — its audience is always exactly "every active
 connection," which is precisely what makes it convenient for anything that should be globally visible

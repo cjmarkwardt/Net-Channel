@@ -9,7 +9,9 @@ This is a reference index of the public surface. For the mechanics and rules beh
 
 `INetManager` is the main entry point for communicating with other peers.
 
-- `Connect(host, port, tag = null)` begins connecting and immediately returns an `INetConnection` in a connecting state. An optional `tag` can later be used to look the connection back up via `GetConnection(tag)` (tag is required to be non-null for lookup).
+- `Host(port = 0, identity = null, host = "0.0.0.0")` starts (or restarts, on a new socket) accepting incoming connections, so the manager can act as a server as well as make its own outgoing ones. `port` of `0` lets the OS assign one; `identity` is a long-term Ed25519 private key used to prove the server's identity to a client connecting in Pinned mode, and without one only Unauthenticated clients can connect — see [Wire.md](Wire.md#server-authentication).
+- `HostPort` is the UDP port currently being listened on, or `null` before `Host` is called — the way to read back an OS-assigned port.
+- `Connect(host, port, tag = null, expectedIdentity = null)` begins connecting and immediately returns an `INetConnection` in a connecting state. An optional `tag` can later be used to look the connection back up via `GetConnection(tag)` (tag is required to be non-null for lookup). `expectedIdentity` is the peer's expected Ed25519 identity public key, connecting in Pinned mode; leaving it null connects in Unauthenticated mode.
 - `PendingConnections` / `ActiveConnections` list connections currently connecting / connected.
 - `StatusChanged` observable fires on any connection status change (`NetStatusChange`: `Connection` + `Status`).
 - `Rejected` observable fires when a connecting connection fails to connect (`NetConnectionFailure`: `Connection` + `Exception`).
@@ -19,6 +21,7 @@ This is a reference index of the public surface. For the mechanics and rules beh
 - `CreateView(tag = null)` / `GetView(tag)` create/look up an `INetView`; `Views` lists all of them.
 - `All` is the `INetGroup` for every active connection — see [Groups.md](Groups.md).
 - `Listen<TModel, TController>(listener)` registers a listener for newly visible entities matching both `TModel` and `TController`, returning an `IDisposable` that unsubscribes it — see [Entities.md](Entities.md#listening-for-remote-entities).
+- `SetSerializer<T>(serializer)` registers the `INetSerializer` used for every model property value, controller method argument, and method result of type `T` — see "Value serialization" below.
 - `INetManager` implements `IDisposable`/`IAsyncDisposable`: `Dispose()` immediately ends every connection (like calling `Drop()` on each); `DisposeAsync()` ends them all gracefully (like calling `Disconnect()` on each) and completes once every connection has ended.
 
 ## Connections
@@ -28,10 +31,14 @@ This is a reference index of the public surface. For the mechanics and rules beh
 - `Status` (`NetStatus`: `Disconnected` / `Connecting` / `Connected`), `Direction` (`NetDirection`: `Incoming` / `Outgoing`), `Host`, `Port`, `Tag`, `Roles`.
 - `Latency` is a `TimeSpan`, the connection's round-trip latency as most recently measured by the liveness heartbeat (see [Wire.md](Wire.md#liveness)).
 - `Position` is this connection's global `NetPosition?` for position-based visibility filtering — see "Position-based visibility" below. Purely local to this manager; never transmitted to or visible from the remote peer.
-- `Drop()` ends the connection immediately, without a graceful shutdown. `Disconnect()` ends it gracefully and asynchronously.
+- `Drop()` ends the connection immediately, without a graceful shutdown. `Disconnect()` ends it gracefully, notifying the peer first so it need not wait for a timeout; the notification is never acknowledged, so this doesn't wait on the peer either.
+- `Wait()` resolves once a connecting connection reaches `Connected`, or faults if the attempt ends for any reason — a rejection, a local `Drop()`/`Disconnect()`, or the manager being disposed. It returns immediately if the connection has already resolved either way.
 - `Promote(role)` / `Demote(role)` grant/revoke a role on the connection — see [Access.md](Access.md).
 
 `INetConnection` has no generic message-sending API of its own — all network interaction flows through entities.
+
+Addressing is IPv4 only, for both `Host` and `Connect` — anything else is rejected with an `ArgumentException`
+rather than reaching the socket layer. `Connect` also accepts a host name, resolved to its first IPv4 address.
 
 ## Groups and views
 
@@ -54,9 +61,32 @@ by any connection that can see the entity); `[NetPosition]` marks a model proper
 visibility filtering (see below). The first time a
 `TModel`/`TController` pairing is used (`Add` or `Listen`), it's validated once and cached;
 `NetInvalidInterfaceException` is thrown then if either doesn't have the required shape, or misuses one of
-these attributes — see [Entities.md](Entities.md#interface-validation) for the full list of checks. See
+these attributes — see [Entities.md](Entities.md#interface-validation) for the full list of checks. Either
+interface may extend others; everything it inherits counts as its own. See
 [Entities.md](Entities.md) for `INetEntity`, `NetEntity<TModel, TController>`, `INetState`/`INetState<TModel>`,
 `INetRemoteEntity`, and how failures surface.
+
+## Value serialization
+
+Every model property value, controller method argument, and method result travels the wire as opaque bytes.
+How an individual value becomes those bytes is decided per CLR type:
+
+- By default, automatic Protocol Buffers serialization, requiring no attributes or generated code on the type.
+- `INetManager.SetSerializer<T>(serializer)` overrides that for `T` with an `INetSerializer`, whose
+  `Serialize(value)` returns an `IMemoryOwner<byte>` rented from a shared pool (the caller disposes it) and
+  whose `Deserialize(data)` reads one back. Both sides of a connection must agree on the serializer used for a
+  type; registering one on only one peer leaves the other unable to read what it sends.
+
+A null value and a value that happens to encode to nothing (an empty collection, say) stay distinguishable, so
+either round-trips back as itself rather than collapsing into the other.
+
+Whatever a value encodes to has to fit in a single UDP datagram alongside the rest of its packet — there is no
+fragmentation ([Wire.md](Wire.md#datagram-layout)). Setting a property to something too large doesn't throw;
+the value simply never reaches the other side, so keep bulk data out of entity state.
+
+A type with no serializer registered for it has to be one Protocol Buffers can handle. One that isn't (an
+`Exception`, say, or another type with no meaningful contract) surfaces as an exception from whatever set or
+call first tries to encode it, so register an `INetSerializer` for any such type before using it.
 
 ## Position-based visibility
 

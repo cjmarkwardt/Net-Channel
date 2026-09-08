@@ -6,6 +6,12 @@ namespace Markwardt.NetChannel;
 public interface INetManager : IDisposable, IAsyncDisposable
 {
     /// <summary>
+    /// The single protocol version every manager runs, sent as <c>HandshakeInit.protocol_version</c> and
+    /// checked against an incoming client's own (see Docs/Wire.md#connection-handshake).
+    /// </summary>
+    static string ProtocolVersion => "1";
+
+    /// <summary>
     /// Triggered when a connection's status has changed.
     /// </summary>
     IObservable<NetStatusChange> StatusChanged { get; }
@@ -57,6 +63,12 @@ public interface INetManager : IDisposable, IAsyncDisposable
     INetGroup All { get; }
 
     /// <summary>
+    /// The UDP port this manager is currently listening on for incoming connections, or <see langword="null"/>
+    /// if <see cref="Host"/> has not been called.
+    /// </summary>
+    int? HostPort { get; }
+
+    /// <summary>
     /// How long a connection can go without sending any traffic before this manager automatically sends a
     /// ping on it, proving liveness to the remote peer during an otherwise-idle period. Defaults to 1.5
     /// seconds.
@@ -70,13 +82,40 @@ public interface INetManager : IDisposable, IAsyncDisposable
     TimeSpan DisconnectTimeout { get; set; }
 
     /// <summary>
+    /// Starts (or restarts, on a new socket) accepting incoming connections on a local endpoint, allowing this
+    /// manager to act as a server in addition to making its own outgoing connections via <see cref="Connect"/>.
+    /// </summary>
+    /// <param name="port">The local UDP port to listen on, or <c>0</c> to let the OS assign one.</param>
+    /// <param name="identity">
+    /// This manager's long-term Ed25519 identity private key (a 32-byte seed), used to sign
+    /// <c>HandshakeChallenge.server_public_key</c> so a client connecting in Pinned mode can verify it, or
+    /// <see langword="null"/> to leave no identity key configured, in which case only Unauthenticated clients
+    /// can connect (see Docs/Wire.md#server-authentication).
+    /// </param>
+    /// <param name="host">The local IPv4 address to bind to, e.g. <c>"0.0.0.0"</c> for every local interface.</param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="identity"/> is given but is not 32 bytes, or <paramref name="host"/> is not an IPv4
+    /// address — Net-Channel is IPv4 only.
+    /// </exception>
+    void Host(int port = 0, ReadOnlyMemory<byte>? identity = null, string host = "0.0.0.0");
+
+    /// <summary>
     /// Begins attempting to connect to the given host and port.
     /// </summary>
-    /// <param name="host">The host address to connect to.</param>
+    /// <param name="host">The IPv4 address, or a host name resolving to one, to connect to.</param>
     /// <param name="port">The port number to connect to.</param>
     /// <param name="tag">An arbitrary value to associate with the connection, retrievable later via <see cref="GetConnection"/>.</param>
+    /// <param name="expectedIdentity">
+    /// The remote peer's expected Ed25519 identity public key, connecting in Pinned mode, or
+    /// <see langword="null"/> to connect in Unauthenticated mode (see Docs/Wire.md#server-authentication).
+    /// </param>
     /// <returns>The connection, immediately returned in a connecting state.</returns>
-    INetConnection Connect(string host, int port, object? tag = null);
+    /// <exception cref="ArgumentException">
+    /// <paramref name="expectedIdentity"/> is given but is not 32 bytes, or <paramref name="host"/> is neither
+    /// an IPv4 address nor a host name resolving to one — Net-Channel is IPv4 only.
+    /// </exception>
+    /// <exception cref="SocketException"><paramref name="host"/> is a host name that could not be resolved.</exception>
+    INetConnection Connect(string host, int port, object? tag = null, ReadOnlyMemory<byte>? expectedIdentity = null);
 
     /// <summary>
     /// Gets the pending or active connection with the given tag.
@@ -121,4 +160,13 @@ public interface INetManager : IDisposable, IAsyncDisposable
     IDisposable Listen<TModel, TController>(Action<INetRemoteEntity<TModel, TController>> listener)
         where TModel : class
         where TController : class;
+
+    /// <summary>
+    /// Registers the serializer used to encode and decode every model property value, controller method
+    /// argument, and method result of type <typeparamref name="T"/>. A type with no serializer registered for
+    /// it defaults to automatic Protocol Buffers serialization.
+    /// </summary>
+    /// <typeparam name="T">The type to register the serializer for.</typeparam>
+    /// <param name="serializer">The serializer to use for <typeparamref name="T"/> from now on.</param>
+    void SetSerializer<T>(INetSerializer serializer);
 }

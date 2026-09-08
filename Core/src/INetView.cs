@@ -29,12 +29,14 @@ public interface INetView : INetGroup
     /// Adds connections to the view as viewers.
     /// </summary>
     /// <param name="viewers">The connections to add.</param>
+    /// <exception cref="ArgumentException">A connection was not created by this library.</exception>
     void AddViewers(params IEnumerable<INetConnection> viewers);
 
     /// <summary>
     /// Removes connections from the view's viewers.
     /// </summary>
     /// <param name="viewers">The connections to remove.</param>
+    /// <exception cref="ArgumentException">A connection was not created by this library.</exception>
     void RemoveViewers(params IEnumerable<INetConnection> viewers);
 
     /// <summary>
@@ -44,6 +46,7 @@ public interface INetView : INetGroup
     /// </summary>
     /// <param name="connection">The connection to get the override for.</param>
     /// <returns>The override, or <see langword="null"/> if none is set.</returns>
+    /// <exception cref="ArgumentException"><paramref name="connection"/> was not created by this library.</exception>
     NetPosition? GetViewerPosition(INetConnection connection);
 
     /// <summary>
@@ -54,5 +57,6 @@ public interface INetView : INetGroup
     /// </summary>
     /// <param name="connection">The connection to set the override for.</param>
     /// <param name="position">The override, or <see langword="null"/> to clear it and fall back to the connection's global position within this view.</param>
+    /// <exception cref="ArgumentException"><paramref name="connection"/> was not created by this library.</exception>
     void SetViewerPosition(INetConnection connection, NetPosition? position);
 }

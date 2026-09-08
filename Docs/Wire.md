@@ -22,6 +22,12 @@ checksum, followed by the packet itself:
 | 1-4 (only if `has_checksum` is true) | `checksum` | CRC32C of `packet`, little-endian `uint32`. |
 | next byte onward | `packet` | A serialized `netchannel.wire.Packet` message (see [`Packet.proto`](../Core/Proto/Packet.proto)). |
 
+Every packet is one datagram; Net-Channel never fragments one across several, and never reassembles. A
+`Packet` therefore has to fit in a single UDP datagram, which bounds what an individual property value, method
+argument, or result can be — a value too large to fit simply never goes out (the send fails, and the sender
+treats it as any other lost datagram, so a channel carrying one retries it indefinitely rather than
+progressing). Anything larger than that belongs in a transfer of its own rather than in entity state.
+
 A receiver reads `has_checksum` first, before attempting to interpret anything else, so it always knows
 whether the next 4 bytes are a `checksum` or the start of `packet` itself — there's no other way to tell, since
 `packet`'s own fields (including `connection_id`, which would otherwise be the natural thing to branch on)
@@ -391,7 +397,9 @@ can never arrive, or be applied, out of order.
 - Retransmission: if unacknowledged, the sender resends with backoff, the same as `### Retries` under
   `## Connection handshake` above. Each retransmission is a genuinely new `Packet` — its own fresh `sequence`
   and `tag` — so it takes part in `### Replay rejection` exactly like any other packet, with no special-casing
-  needed there. An `EntityCall` retransmission carries the exact same content as the attempt before it, since
+  needed there. It also supersedes the attempt before it: since only one message is outstanding on a channel
+  at a time, the sender stops waiting on the previous `sequence` rather than holding that wait forever for an
+  answer that will never come if that attempt was the one lost. An `EntityCall` retransmission carries the exact same content as the attempt before it, since
   it's one specific invocation with fixed arguments; an `EntityCreate` retransmission instead carries the
   entity's *current* property values, not whatever they were at the first attempt, so a slow-to-acknowledge
   create doesn't leave a connection with a stale snapshot once it finally lands. This doesn't complicate
@@ -462,7 +470,17 @@ all). To make that impossible rather than just unlikely, an owner doesn't start 
 given connection until that connection has acknowledged the entity's `EntityCreate`: any change made before
 then is simply reflected in the current values that `EntityCreate`'s own retransmissions carry
 (`## Method delivery` above), and a property's own channel — and any `EntitySet` on it — only exists from
-that acknowledgment onward.
+that acknowledgment onward. A create accepted on its first attempt never gets a retransmission to carry those
+values, though, so on receiving that acknowledgment an owner sends every one of the entity's properties at
+its current value, catching the connection up on whatever changed while the create was outstanding.
+
+Sequence order is what tells a receiver which of two values for the same property is newer, so a sender never
+lets an older value go out under a newer `sequence`: reading the value to send and allocating the sequence to
+send it under happen together, per property per connection, rather than a value being chosen and then racing
+another change to the wire. A receiver, in turn, tracks the highest `sequence` it has accepted for each
+(`entity_id`, `property_id`) and ignores anything at or below it, since UDP can reorder two values in flight
+at once (which `## Property delivery` deliberately allows) and applying the older one last would leave the
+receiver permanently stale.
 
 ## Entities
 
@@ -492,8 +510,9 @@ is what a receiver does with any traffic for an `entity_id` it has no current me
   connection removed as a viewer, or filtered out by position-based visibility — `Docs/Api.md#position-based-visibility`
   — falling out of range). Its `entity_id` is never reused for a different entity afterward (below).
 - `EntitySet` changes a single model property, naming it via `property_id`/`new_property` the same way
-  `EntityCreate.properties` does (only the first time `property_id` is used, for this entity's `model_id`, on
-  this connection). An owner sends it to broadcast a local change to every connection the entity is visible
+  `EntityCreate.properties` does (until the connection acknowledges a packet carrying that name, for this
+  entity's `model_id`), and says which direction it travels via `is_request` (below). An owner sends it to
+  broadcast a local change to every connection the entity is visible
   to (a property's getter is always synced to every connection the entity is visible to — there is no
   restricting who receives it). A viewer sends it back to the owner to request a change to a property whose
   setter has `NetAccessAttribute` access; the owner applies it locally, broadcasts its own `EntitySet` for
@@ -508,13 +527,29 @@ is what a receiver does with any traffic for an `entity_id` it has no current me
   scheme. A `void` method gets a plain-acknowledgment or `failure`-carrying `Reply` instead (`## Method
   delivery` above), since the caller isn't waiting on a result.
 
+Each side numbers the entities *it* owns, independently of the other, so on a connection carrying entities in
+both directions the same `entity_id` is live in each side's two tables at once and means a different entity in
+each. Every message naming one is therefore resolved by the direction it travels, never by which table happens
+to hold that id: `EntityCreate`/`EntityDestroy` only ever go owner → viewer and `EntityCall` only ever goes
+viewer → owner, so each is unambiguous on its own. `EntitySet` is the exception — it travels both ways — and
+carries `is_request` to say which: true for a viewer requesting a change to an entity the recipient owns,
+false for an owner broadcasting a change to one the recipient only views.
+
 An owner generates a connection's `entity_id`s sequentially and never reuses one for a different entity, for
 the life of the connection — unlike `property_id`/`method_id` (below), which are also never reused but scoped
 per interface type rather than per entity, `entity_id` is `uint64` rather than `uint32`, since a long-lived,
 high-churn connection has more room to grow through entity ids than through interface types. Never reusing an
 id is what lets `EntityCreate`/`EntityDestroy` dedup on `entity_id` alone (no `operation` field, per
 `## Method delivery` above) with no further conditions: there is no old entity a given id could still
-ambiguously refer to, since no id ever refers to more than one entity in the first place. This also keeps a
+ambiguously refer to, since no id ever refers to more than one entity in the first place.
+
+Once an `EntityDestroy` is acknowledged its `entity_id` is spent, and both sides drop everything they were
+keeping under it — the lifecycle channel, that entity's property and method channels, and the per-property
+sequences `## Property delivery` above tracks. An entity that becomes visible to the same connection again
+later (re-added to a group, or back in range under position-based visibility) is created under a *new* id, not
+the old one. Without retiring the id, per-entity state would accumulate for the life of the connection across
+entity churn, and the owner would go on treating the entity as already visible — leaving it unable to ever be
+created for that connection again. This also keeps a
 `NetSecureAttribute` method's payload-encryption key derivation (`### Payload encryption` above) safe, since
 it depends on `entity_id` staying unique to one entity for as long as the connection lives.
 
@@ -526,6 +561,23 @@ by (connection, `model_id`) — found from the `model_id` the entity's own `enti
 connection-wide. Every model interface type gets its own independent `property_id` table, and every
 controller interface type its own independent `method_id` table, so an id under one model/controller type
 means nothing under another, even if two different interfaces happen to declare a same-named property/method.
+
+The interned *name*, not the numeric id, is what a receiver matches against its own copy of the interface, so
+the two sides agree on which member is meant even though each numbers its own independently — an id is only a
+per-connection shorthand for a name, never a position both sides are assumed to derive identically. A receiver
+ignores an id whose name names no member it declares (acknowledging the message as usual, since retransmitting
+it could never help), which is what a peer built against a different version of the interface looks like.
+
+Because a name can only be introduced by a packet that may itself be lost, a sender keeps including it on
+every attempt until one carrying it is acknowledged, rather than dropping it after the first attempt — the
+name goes out at most once per (connection, interface, member) in the common case, but never exactly once at
+the cost of the receiver never learning it at all. Each direction keeps its own table: the entity's owner
+numbers the members of the entities it owns, so the same numeric `model_id` can refer to a different interface
+depending on which side sent it.
+
+`property_id`/`method_id` tables are also the reason `EntityCreate` omits a property left at its declared
+default — such a property is never introduced by that create, so its name is still owed to the connection and
+goes out with the first `EntitySet` that carries it.
 
 A property's encoded value (`EntityProperty.value` within `EntityCreate.properties`, or `EntitySet.value`),
 each `EntityCall` argument, and `Reply.result` are opaque `bytes`; the encoding of an individual property or

@@ -20,7 +20,9 @@ A local entity is defined by the combination of three things:
 
 These three are deliberately separate: the model interface can't contain methods, and the controller
 interface can't contain properties, so "what other peers can see" and "what other peers can do" are always
-distinguishable just by which interface a member is declared on. A **remote entity** is what the *other* side
+distinguishable just by which interface a member is declared on. Either interface may extend others, in which
+case everything it inherits counts as its own — a base interface's properties sync and its methods are
+callable exactly as if declared directly on it. A **remote entity** is what the *other* side
 of this looks like — a proxy for an entity owned somewhere else, described in "Remote entities" below.
 
 ## The model interface
@@ -50,6 +52,8 @@ any of these checks throws `NetInvalidInterfaceException` at that first point of
 
 - `TModel` must contain only properties, each with a public getter and setter; `TController` must contain
   only methods returning `void`, `Task`, or `Task<T>`.
+- No two members may share a name, since the wire format identifies a member by name — so a controller
+  interface can't declare overloads, and neither kind may re-declare a name a base interface already uses.
 - `[NetRole]`/`[NetAccess]` must be placed on a property or method itself, never on an individual
   getter/setter.
 - `[NetSecure]` must be placed on a controller interface method; never on a model interface property or an
@@ -66,7 +70,10 @@ entities of any model/controller pairing uniformly without needing to be generic
 - `IsDestroyed` — whether `Destroy()` has been called; the entity should not be used afterward.
 - `Destroyed` — an `IObservable<INetEntity>` that fires the first time `Destroy()` is called.
 - `Destroy()` — destroys the entity and triggers `Destroyed`. Only the first call has any effect; every
-  call after that is a no-op, so it's always safe to call more than once.
+  call after that is a no-op, so it's always safe to call more than once. Destroying an entity also removes
+  it from every group it's in, so it stops being exposed to anyone — each viewer sees it become no longer
+  visible, exactly as if it had been removed from those groups by hand. Adding an already-destroyed entity to
+  a group therefore does nothing.
 
 `INetEntity<TModel, TController>` extends it, hiding `State` with a strongly-typed `INetState<TModel>` view
 of the same underlying state — everything else is inherited unchanged.

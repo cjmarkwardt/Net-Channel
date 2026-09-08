@@ -24,8 +24,9 @@ public interface INetEntity
     IObservable<INetEntity> Destroyed { get; }
 
     /// <summary>
-    /// Destroys the entity and triggers <see cref="Destroyed"/>. The entity should not be used afterward.
-    /// Only the first call has any effect; every call after that is a no-op.
+    /// Destroys the entity and triggers <see cref="Destroyed"/>, also removing it from every
+    /// <see cref="INetGroup"/> it belongs to so that it stops being exposed to any connection. The entity
+    /// should not be used afterward. Only the first call has any effect; every call after that is a no-op.
     /// </summary>
     void Destroy();
 }

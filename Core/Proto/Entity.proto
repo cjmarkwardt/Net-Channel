@@ -11,9 +11,9 @@ message EntityProperty {
   // this is sent for (see Docs/Wire.md) — not shared across different model interfaces.
   uint32 property_id = 1;
 
-  // The property's name, as declared on the entity's model interface. Set only the first time `property_id`
-  // is used, for this entity's model_id, on this connection; empty on every later `EntityProperty` that
-  // reuses it, since the connection has already learned the mapping.
+  // The property's name, as declared on the entity's model interface, and what the receiver matches against
+  // its own copy of that interface. Set until the connection acknowledges a packet carrying it, for this
+  // entity's model_id; empty afterward, since the connection has learned the mapping by then.
   string new_property = 2;
 
   // The property's encoded value. Its encoding, based on the property's declared type, is out of scope for
@@ -70,14 +70,21 @@ message EntitySet {
   // this is sent for (see Docs/Wire.md) — not shared across different model interfaces.
   uint32 property_id = 2;
 
-  // The property's name, as declared on the entity's model interface. Set only the first time `property_id`
-  // is used, for this entity's model_id, on this connection; empty on every later `EntitySet` that reuses it,
-  // since the connection has already learned the mapping.
+  // The property's name, as declared on the entity's model interface, and what the receiver matches against
+  // its own copy of that interface. Set until the connection acknowledges a packet carrying it, for this
+  // entity's model_id; empty afterward, since the connection has learned the mapping by then.
   string new_property = 3;
 
   // The property's new encoded value. Its encoding, based on the property's declared type, is out of scope
   // for this schema.
   bytes value = 4;
+
+  // True when a viewer is requesting a change to an entity its recipient owns; false when an owner is
+  // broadcasting a change to an entity its recipient only views. Each side numbers the entities it owns
+  // independently, so the same `entity_id` refers to a different entity depending on which side sent it —
+  // without this the recipient could not tell which of its own two tables to resolve `entity_id` in. See
+  // Docs/Wire.md.
+  bool is_request = 5;
 }
 
 // Sent to invoke a method on an entity's controller. Arguments are positional, matching the order declared
@@ -92,9 +99,9 @@ message EntityCall {
   // controller interfaces.
   uint32 method_id = 2;
 
-  // The method's name, as declared on the entity's controller interface. Set only the first time
-  // `method_id` is used, for this entity's controller_id, on this connection; empty on every later
-  // `EntityCall` that reuses it, since the connection has already learned the mapping.
+  // The method's name, as declared on the entity's controller interface, and what the receiver matches
+  // against its own copy of that interface. Set until the connection acknowledges a packet carrying it, for
+  // this entity's controller_id; empty afterward, since the connection has learned the mapping by then.
   string new_method = 3;
 
   // The call's arguments, in declaration order. Encrypted, in place of plaintext, for a NetSecureAttribute

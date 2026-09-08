@@ -58,9 +58,22 @@ public interface INetConnection
     void Drop();
 
     /// <summary>
-    /// Gracefully ends the connection, awaiting acknowledgement from the remote peer before it completes.
+    /// Waits for a pending connection attempt to resolve. Completes immediately if <see cref="Status"/> is
+    /// already <see cref="NetStatus.Connected"/>, or faults immediately if it is already
+    /// <see cref="NetStatus.Disconnected"/>.
     /// </summary>
-    /// <returns>A task that completes once the connection has ended.</returns>
+    /// <returns>
+    /// A task that completes once the connection reaches <see cref="NetStatus.Connected"/>, or faults with the
+    /// same exception <see cref="INetManager.Rejected"/> would report if the attempt fails first.
+    /// </returns>
+    Task Wait();
+
+    /// <summary>
+    /// Gracefully ends the connection, notifying the remote peer first so it can end its own side immediately
+    /// rather than waiting for the connection to time out. The notification is best-effort and never
+    /// acknowledged (see Docs/Wire.md#liveness), so this does not wait on the remote peer.
+    /// </summary>
+    /// <returns>A task that completes once this side of the connection has ended.</returns>
     Task Disconnect();
 
     /// <summary>

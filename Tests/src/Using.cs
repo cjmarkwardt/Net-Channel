@@ -1,5 +1,16 @@
+global using System.Collections.Concurrent;
+global using System.Buffers;
+global using System.Buffers.Binary;
 global using System.Net;
 global using System.Net.Sockets;
+global using System.Numerics;
+global using System.Runtime.CompilerServices;
+global using System.Text;
+global using System.Threading;
+global using Markwardt.NetChannel;
+global using Markwardt.NetChannel.Internal;
+global using Google.Protobuf;
+global using Markwardt.NetChannel.Wire;
 global using Microsoft.Extensions.DependencyInjection;
 global using Moq;
 global using Xunit;
