@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Verify the tag matches the packaged version
+        # Core.csproj's <Version> is what ends up inside the package, and nothing derives it from the tag, so
+        # the two can disagree silently and ship a package that contradicts the release it is attached to.
+        run: |
+          version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' Core/Core.csproj)
+          if [ "$version" != "${{ github.ref_name }}" ]; then
+            echo "Tag ${{ github.ref_name }} does not match Core.csproj <Version> $version." >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: dotnet test Tests/Tests.csproj --configuration Release
+
+      - name: Pack
+        # GeneratePackageOnBuild (Core/Core.csproj) fires from `dotnet build` in Release. Leaving it on here
+        # collides with `dotnet pack`'s own Build-then-Pack ordering: the build never runs and packing fails
+        # with NU5026 (missing DLL) on a clean checkout. Disabling it lets pack build first as normal.
+        run: dotnet pack Core/Core.csproj --configuration Release --output packages -p:GeneratePackageOnBuild=false
+
+      - name: Create the release and attach the package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          packages/*.nupkg packages/*.snupkg
+          --title "${{ github.ref_name }}"
+          --generate-notes

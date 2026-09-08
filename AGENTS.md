@@ -55,9 +55,13 @@ See [README.md](README.md) for the project layout (Core, Tests) and the index of
   dotnet build Core/Core.csproj -c Release
   ```
 
-  The resulting `.nupkg`/`.snupkg` land in `Core/bin/Release/`. `dotnet pack -c Release` works the same way if you only want the package without a full build.
+  The resulting `.nupkg`/`.snupkg` land in `Core/bin/Release/`. To pack without a full build, `GeneratePackageOnBuild` has to be turned off for that invocation — left on, it collides with `dotnet pack`'s own build-then-pack ordering and fails with NU5026 on a clean tree:
+
+  ```
+  dotnet pack Core/Core.csproj -c Release -p:GeneratePackageOnBuild=false
+  ```
 
 ## Versioning
 
 - The version lives in one place — `Core/Core.csproj`'s `<Version>`. It is not tied to any automated versioning scheme (e.g. git tags, a CI-computed version) — bump it by hand before cutting a release.
-- The version bump and the git tag used for the corresponding GitHub Release must match, or the published package will disagree with the release it's attached to.
+- To release: bump `<Version>`, then push a matching `x.x.x` tag. [`.github/workflows/release.yml`](.github/workflows/release.yml) takes it from there — it verifies the tag equals `<Version>` (they must match, or the published package would disagree with the release it's attached to), runs the tests, packs, and creates the GitHub Release with the `.nupkg`/`.snupkg` attached. A mismatched tag fails the run before anything is published.
